@@ -1,28 +1,28 @@
 name: OpenWrt_Build_Template
 
 on:
-  workflow_dispatch:  # 支持手动启动
-  repository_dispatch:  # 支持 update-checker.yml 自动触发
-    types: [Source Code Update YOUR_PROJECT]  # ← 修改为你的事件类型（如 Source Code Update lede）
+  workflow_dispatch:  # 手动触发
+  repository_dispatch:  # 由 update-checker.yml 自动触发
+    types: [Source Code Update YOUR_PROJECT] # ← 修改为你的事件类型
 
 env:
-  REPO_URL: https://github.com/your/openwrt.git         # ← 源码地址（需修改）
-  REPO_BRANCH: master                                  # ← 源码分支（需修改）
-  CONFIG_FILE: configs/your_device.config              # ← .config 路径（需修改）
-  DIY_SCRIPT: diy-script.sh                            # ← 自定义脚本（需修改）
-  FIRMWARE_TAG: OpenWrt-AutoBuild                      # ← 发布标签（可修改）
-  CACHE_TOOLCHAIN: true
-  UPLOAD_BIN_DIR: false
-  FIRMWARE_RELEASE: true
-  CLASH_KERNEL: amd64
-  TZ: Asia/Shanghai
+  REPO_URL: https://github.com/your/openwrt.git         # ← 源码地址（需自定义）
+  REPO_BRANCH: master                                  # ← 源码分支（需自定义）
+  CONFIG_FILE: configs/your_device.config              # ← .config 路径（需自定义）
+  DIY_SCRIPT: diy-script.sh                            # ← 自定义脚本（需自定义）
+  FIRMWARE_TAG: OpenWrt-AutoBuild                      # 发布标签
+  CACHE_TOOLCHAIN: true                                # 是否启用工具链缓存
+  UPLOAD_BIN_DIR: false                                # 是否上传完整 bin 目录
+  FIRMWARE_RELEASE: true                               # 是否上传到 Release
+  CLASH_KERNEL: amd64                                  # clash 内核架构
+  TZ: Asia/Shanghai                                    # 时区
 
 jobs:
   Build:
     runs-on: ubuntu-22.04
 
     steps:
-    # 检查服务器性能（可选）
+    # 检查服务器性能，便于判断编译资源
     - name: Check Server Performance
       run: |
         echo "警告⚠ 服务器性能有限，插件过多请注意！"
@@ -35,7 +35,7 @@ jobs:
         echo "--------------------------硬盘信息--------------------------"
         echo "硬盘数量：$(ls /dev/sd* | grep -v [1-9] | wc -l)" && df -hT
 
-    # 初始化环境，清理无用依赖
+    # 初始化环境，清理无用依赖，释放空间
     - name: Initialization Environment
       env:
         DEBIAN_FRONTEND: noninteractive
@@ -50,7 +50,7 @@ jobs:
         sudo -E apt-get -y clean
         sudo timedatectl set-timezone "$TZ"
 
-    # 合并磁盘，扩展可用空间
+    # 合并磁盘，扩展临时空间
     - name: Combine Disks
       uses: easimon/maximize-build-space@master
       with:
@@ -62,7 +62,7 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # 克隆 OpenWrt 源码并容错提取元信息
+    # 克隆 OpenWrt 源码并提取元信息
     - name: Clone Source Code
       run: |
         set -o pipefail
@@ -70,11 +70,9 @@ jobs:
         git clone --depth 1 -b "$REPO_BRANCH" "$REPO_URL" openwrt
         cd openwrt
         echo "OPENWRT_PATH=$PWD" >> $GITHUB_ENV
-
         # 提取主分支最后一次提交信息（容错）
         VERSION_INFO=$(git show -s --date=short --format="作者: %an<br/>时间: %cd<br/>内容: %s<br/>hash: %H" 2>/dev/null || echo "unknown")
         echo "VERSION_INFO=$VERSION_INFO" >> $GITHUB_ENV
-
         # 提取内核版本（兼容多种源码结构）
         VERSION_KERNEL="unknown"
         if ls target/linux/generic/kernel-* 1>/dev/null 2>&1; then
@@ -83,13 +81,11 @@ jobs:
           VERSION_KERNEL=$(grep -r -m1 -oP 'LINUX_VERSION:=[ ]*\K[0-9]+\.[0-9]+\.[0-9]+' target/linux/ | head -n1)
         fi
         echo "VERSION_KERNEL=$VERSION_KERNEL" >> $GITHUB_ENV
-
-        # Debug输出
         echo "VERSION_INFO: $VERSION_INFO"
         echo "VERSION_KERNEL: $VERSION_KERNEL"
         ls -al target/linux/generic/ || true
 
-    # 生成变量，便于后续缓存和发布（兼容不同源码结构）
+    # 生成变量，便于后续缓存和发布
     - name: Generate Variables
       run: |
         cp "$CONFIG_FILE" "$OPENWRT_PATH/.config"
@@ -97,12 +93,10 @@ jobs:
         make defconfig
         SOURCE_REPO="$(echo $REPO_URL | awk -F '/' '{print $(NF)}')"
         echo "SOURCE_REPO=$SOURCE_REPO" >> $GITHUB_ENV
-
-        # 兼容不同 config 格式提取 target
+        # 提取 target
         DEVICE_TARGET=$(grep CONFIG_TARGET_BOARD .config | grep -o '".*"' | tr -d '"' || true)
         [ -z "$DEVICE_TARGET" ] && DEVICE_TARGET=$(grep CONFIG_TARGET_BOARD .config | awk -F '=' '{print $2}' | tr -d '"' || true)
         echo "DEVICE_TARGET=$DEVICE_TARGET" >> $GITHUB_ENV
-
         DEVICE_SUBTARGET=$(grep CONFIG_TARGET_SUBTARGET .config | grep -o '".*"' | tr -d '"' || true)
         [ -z "$DEVICE_SUBTARGET" ] && DEVICE_SUBTARGET=$(grep CONFIG_TARGET_SUBTARGET .config | awk -F '=' '{print $2}' | tr -d '"' || true)
         echo "DEVICE_SUBTARGET=$DEVICE_SUBTARGET" >> $GITHUB_ENV
@@ -153,49 +147,34 @@ jobs:
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
-        echo "DATE=$(date +"%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
-        echo "FILE_DATE=$(date +"%Y.%m.%d")" >> $GITHUB_ENV
+        echo "DATE=$(date +\"%Y-%m-%d %H:%M:%S\")" >> $GITHUB_ENV
+        echo "FILE_DATE=$(date +\"%Y.%m.%d\")" >> $GITHUB_ENV
 
     # 检查空间使用
     - name: Check Space Usage
       if: (!cancelled())
       run: df -hT
 
-    # 上传 bin 目录（可选）
-    - name: Upload Bin Directory
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ env.SOURCE_REPO }}-bin-${{ env.DEVICE_TARGET }}-${{ env.DEVICE_SUBTARGET }}-${{ env.FILE_DATE }}
-        path: ${{ env.OPENWRT_PATH }}/bin
-
-    # 整理插件包和固件
-    - name: Organize Files
+    # 整理固件、插件、配置文件，结构清晰
+    - name: Organize Files (整理固件与插件)
       if: steps.compile.outputs.status == 'success'
       run: |
-        cd "$OPENWRT_PATH/bin/targets/"*/*
+        cd $OPENWRT_PATH/bin/targets/*/*
         cat sha256sums || true
-        cp "$OPENWRT_PATH/.config" build.config || true
-        IPK_DIR="$OPENWRT_PATH/bin/packages"
-        FOUND_IPK=false
-        FOUND_APK=false
-        if find "$IPK_DIR" -type f -name '*.ipk' | grep -q .; then
-          FOUND_IPK=true
-        fi
-        if find "$IPK_DIR" -type f -name '*.apk' | grep -q .; then
-          FOUND_APK=true
-        fi
-        if [ "$FOUND_IPK" = true ] || [ "$FOUND_APK" = true ]; then
-          mkdir -p packages
-          [ "$FOUND_IPK" = true ] && find "$IPK_DIR" -type f -name '*.ipk' -exec mv -f {} packages/ \;
-          [ "$FOUND_APK" = true ] && find "$IPK_DIR" -type f -name '*.apk' -exec mv -f {} packages/ \;
+        cp $OPENWRT_PATH/.config build.config
+        mkdir -p packages
+        # 收集所有 .ipk
+        find $OPENWRT_PATH/bin/packages -type f -name '*.ipk' -exec cp {} packages/ \; 2>/dev/null || true
+        # 收集所有 .apk
+        find $OPENWRT_PATH/bin/packages -type f -name '*.apk' -exec cp {} packages/ \; 2>/dev/null || true
+        # 打包插件
+        if [ \"$(ls -A packages)\" ]; then
           tar -zcf Packages.tar.gz packages
-          rm -rf packages
         else
-          echo "::warning ::No .ipk or .apk plugin packages found, skipping packaging step."
+          echo \"::warning ::No .ipk or .apk plugin packages found, skipping packaging step.\"
         fi
-        rm -f feeds.buildinfo version.buildinfo || true
-        echo "FIRMWARE_PATH=$PWD" >> $GITHUB_ENV
+        rm -rf packages feeds.buildinfo version.buildinfo 2>/dev/null || true
+        echo \"FIRMWARE_PATH=$PWD\" >> $GITHUB_ENV
 
     # 上传固件到 Artifact（可选）
     - name: Upload Firmware To Artifact
