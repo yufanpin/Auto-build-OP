@@ -7,7 +7,7 @@ name: OpenWrt_Build_Template  # 工作流名称，可自定义
 on:
   workflow_dispatch:  # 支持手动触发
   repository_dispatch:  # 支持 update-checker 自动触发
-    types: [Source Code Update YOUR_PROJECT]  # ← 替换为你的事件类型
+    types: [Source Code Update YOUR_PROJECT]  # ← 替换为你的事件类型（如 Source Code Update libwrt）
 
 # ================= 全局环境变量 =================
 env:
